@@ -35,23 +35,21 @@ from django.db import transaction
 from django.core.management.base import BaseCommand, CommandError
 from django.contrib.gis.geos import MultiPolygon, Polygon
 from django.contrib.gis.geos.geometry import GEOSGeometry
+from django.utils.dateparse import parse_date, parse_datetime
 
-from eoxserver.core.system import System
-from eoxserver.core.util.timetools import getDateTime
 from eoxserver.resources.coverages.management.commands import (
     CommandOutputMixIn, _variable_args_cb, StringFormatCallback
 )
-from eoxserver.resources.coverages.metadata import EOMetadata
+from eoxserver.resources.coverages import models
 
-#-------------------------------------------------------------------------------
 
-from eoxserver.resources.coverages.managers import getDatasetSeriesManager
+def parse_date_or_datetime(string):
+    return parse_date(string) or parse_datetime(string)
 
-#-------------------------------------------------------------------------------
 
 class Command(CommandOutputMixIn, BaseCommand):
     option_list = BaseCommand.option_list + (
-        make_option('-i', '--eo-id', '--id',
+        make_option('-i', '--id', '--identifier',
             dest='eoid', metavar="EOID",
             default=None,
             help=('Mandatory. The EOID of the Dataset Series to be created.')
@@ -90,14 +88,14 @@ class Command(CommandOutputMixIn, BaseCommand):
         ),
         make_option('--begin-time','--default-begin-time',
             dest='default_begin_time',
-            action="callback", callback=StringFormatCallback(getDateTime),
+            action="callback", callback=StringFormatCallback(parse_date_or_datetime),
             default=None,
             help=("Optional. Default begin timestamp when no other EO-metadata " 
                   "is available. The format is ISO-8601.")
         ),
         make_option('--end-time','--default-end-time',
             dest='default_end_time',
-            action="callback", callback=StringFormatCallback(getDateTime),
+            action="callback", callback=StringFormatCallback(parse_date_or_datetime),
             default=None,
             help=("Optional. Default end timestamp when no other EO-metadata " 
                   "is available. The format is ISO-8601.")
@@ -142,8 +140,6 @@ class Command(CommandOutputMixIn, BaseCommand):
     args = '--eo-id EOID'
 
     def handle(self, *args, **options):
-        System.init()
-        
         #=======================================================================
         # Collect parameters
         #=======================================================================
@@ -168,25 +164,19 @@ class Command(CommandOutputMixIn, BaseCommand):
         if default_footprint is not None:
             footprint = GEOSGeometry(default_footprint)
         else:
-            footprint = MultiPolygon(Polygon(((0, 0), (0, 1), (1, 1), (1, 0), (0, 0))))
-            self.print_msg("Using default footprint: %s" % footprint.wkt, 2)
+            footprint = None
         
         #=======================================================================
         # Create Dataset Series
         #=======================================================================
         
-        dss_mgr = getDatasetSeriesManager() 
-        
         self.print_msg("Creating Dataset Series with ID '%s'." % eoid, 1)
         
         with transaction.commit_on_success():
-            dss_mgr.create(
-                eo_metadata=EOMetadata(
-                    eoid,
-                    default_begin_time or datetime.datetime.now(),
-                    default_end_time or datetime.datetime.now(),
-                    footprint
-                )
+            models.DatasetSeries.objects.create(
+                begin_time=default_begin_time,
+                end_time=default_end_time,
+                footprint=footprint
             )
             
             #===================================================================
